@@ -30,6 +30,8 @@ public class VoidCache {
 	private final BiomeGenerator biomeGenerator;
 	private final GenerationPopulator baseGenerator;
 	private final List<GenerationPopulator> generationPopulators;
+	private final MutableBlockVolume chunkBlocksBuffer = Sponge.getRegistry().getExtentBufferFactory()
+			.createBlockBuffer(16, WORLD_HEIGHT, 16);
 
 	public VoidCache(BiomeGenerator biomeGenerator, GenerationPopulator baseGenerator,
 			List<GenerationPopulator> generationPopulators) {
@@ -68,15 +70,17 @@ public class VoidCache {
 			.build(new CacheLoader<ChunkCoordinates, boolean[][]>() {
 				@Override
 				public boolean[][] load(ChunkCoordinates key) throws Exception {
-					MutableBlockVolume chunkBlocks = blockCache.getUnchecked(key);
-					boolean[][] result = new boolean[16][16];
-					for (int z = 0; z < 16; ++z) {
-						for (int x = 0; x < 16; ++x) {
-							BlockType block = chunkBlocks.getBlockType(key.chunkX + x, SEA_LEVEL, key.chunkZ + z);
-							result[z][x] = block == BlockTypes.AIR || block == BlockTypes.WATER;
+					synchronized (chunkBlocksBuffer) {
+						MutableBlockVolume chunkBlocks = generateChunkBlocks(key);
+						boolean[][] result = new boolean[16][16];
+						for (int z = 0; z < 16; ++z) {
+							for (int x = 0; x < 16; ++x) {
+								BlockType block = chunkBlocks.getBlockType(key.chunkX + x, SEA_LEVEL, key.chunkZ + z);
+								result[z][x] = block == BlockTypes.AIR || block == BlockTypes.WATER;
+							}
 						}
+						return result;
 					}
-					return result;
 				}
 			});
 
@@ -93,53 +97,47 @@ public class VoidCache {
 				}
 			});
 
-	private final LoadingCache<ChunkCoordinates, MutableBlockVolume> blockCache = CacheBuilder.newBuilder()
-			.expireAfterAccess(CACHE_EXPIRY_SECONDS, TimeUnit.SECONDS)
-			.build(new CacheLoader<ChunkCoordinates, MutableBlockVolume>() {
-				@Override
-				public MutableBlockVolume load(ChunkCoordinates key) throws Exception {
-					MutableBiomeArea chunkBiomes = biomeCache.getUnchecked(key);
+	public MutableBlockVolume generateChunkBlocks(ChunkCoordinates key) throws Exception {
+		MutableBiomeArea chunkBiomes = biomeCache.getUnchecked(key);
 
-					// Generate base terrain
-					MutableBlockVolume chunkBlocks = Sponge.getRegistry().getExtentBufferFactory()
-							.createBlockBuffer(16, WORLD_HEIGHT, 16)
-							.getBlockView(DiscreteTransform3.fromTranslation(key.chunkX, 0, key.chunkZ));
-					ImmutableBiomeArea biomeBuffer = chunkBiomes.getImmutableBiomeCopy();
-					baseGenerator.populate(key.world, chunkBlocks, biomeBuffer);
+		// Generate base terrain
+		MutableBlockVolume chunkBlocks = chunkBlocksBuffer
+				.getBlockView(DiscreteTransform3.fromTranslation(key.chunkX, 0, key.chunkZ));
+		ImmutableBiomeArea biomeBuffer = chunkBiomes.getImmutableBiomeCopy();
+		baseGenerator.populate(key.world, chunkBlocks, biomeBuffer);
 
-					// Apply the generator populators to complete the
-					// blockBuffer
-					for (GenerationPopulator populator : generationPopulators) {
-						if (populator.getClass() != VoidCraftGenerator.class) {
-							populator.populate(key.world, chunkBlocks, biomeBuffer);
-						}
-					}
+		// Apply the generator populators to complete the
+		// blockBuffer
+		for (GenerationPopulator populator : generationPopulators) {
+			if (populator.getClass() != VoidCraftGenerator.class) {
+				populator.populate(key.world, chunkBlocks, biomeBuffer);
+			}
+		}
 
-					// Get unique biomes to determine what generator populators
-					// to run
-					List<BiomeType> uniqueBiomes = Lists.newArrayList();
-					for (int x = 0; x < 16; x++) {
-						for (int z = 0; z < 16; z++) {
-							BiomeType biome = chunkBiomes.getBiome(key.chunkX + x, key.chunkZ + z);
-							if (!uniqueBiomes.contains(biome)) {
-								uniqueBiomes.add(biome);
-							}
-						}
-					}
-
-					// Apply biome specific generator populators
-					for (BiomeType type : uniqueBiomes) {
-						for (GenerationPopulator populator : key.world.getWorldGenerator().getBiomeSettings(type)
-								.getGenerationPopulators()) {
-							if (populator.getClass() != VoidCraftGenerator.class) {
-								populator.populate(key.world, chunkBlocks, biomeBuffer);
-							}
-						}
-					}
-
-					return chunkBlocks;
+		// Get unique biomes to determine what generator populators
+		// to run
+		List<BiomeType> uniqueBiomes = Lists.newArrayList();
+		for (int x = 0; x < 16; x++) {
+			for (int z = 0; z < 16; z++) {
+				BiomeType biome = chunkBiomes.getBiome(key.chunkX + x, key.chunkZ + z);
+				if (!uniqueBiomes.contains(biome)) {
+					uniqueBiomes.add(biome);
 				}
-			});
+			}
+		}
+
+		// Apply biome specific generator populators
+		for (BiomeType type : uniqueBiomes) {
+			for (GenerationPopulator populator : key.world.getWorldGenerator().getBiomeSettings(type)
+					.getGenerationPopulators()) {
+				if (populator.getClass() != VoidCraftGenerator.class) {
+					populator.populate(key.world, chunkBlocks, biomeBuffer);
+				}
+			}
+		}
+
+		return chunkBlocks;
+	}
 
 	private static class ChunkCoordinates {
 		private final World world;
