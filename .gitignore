@@ -2,7 +2,8 @@
 /.settings/
 /bin/
 /build/
-
 *.class
 *.classpath
+*.jar
+!/gradle/wrapper/gradle-wrapper.jar
 *.project

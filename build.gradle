@@ -1,6 +1,13 @@
+group = 'com.github.hoqhuuep'
+version = '0.2.0-SNAPSHOT'
+
 apply plugin: 'java'
 apply plugin: 'maven'
 apply plugin: 'eclipse'
+
+
+sourceCompatibility = '1.8'
+targetCompatibility = '1.8'
 
 repositories {
     jcenter()
@@ -13,4 +20,14 @@ repositories {
 
 dependencies {
     compile 'org.spongepowered:spongeapi:3.0.0'
+}
+
+task sponge(type: Jar) {
+    description = 'Create the VoidCraft Sponge plugin JAR'
+    group = project.group
+    baseName = project.name
+    appendix = 'Sponge'
+    version = project.version
+    from(sourceSets.main.output)
+    destinationDir = file(".")
 }
